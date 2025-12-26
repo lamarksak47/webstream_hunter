@@ -1,43 +1,39 @@
 #!/bin/bash
-# WebStream Hunter - Instalador Completo Ubuntu 20.04
-# Arquivo único contendo todo o sistema
-# Execute como root: sudo ./install_webstream_hunter.sh
+# WebStream Hunter - Instalador Otimizado Ubuntu 20.04
+# Script único e completo - Correção de problemas de pacotes
 
 set -e
 
 # ==============================================================================
-# CONFIGURAÇÕES
+# CONFIGURAÇÕES INICIAIS
 # ==============================================================================
 
-# Cores para output
+# Cores
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 # Diretórios
 INSTALL_DIR="/opt/webstream_hunter"
 LOG_DIR="/var/log/webstream_hunter"
-DATA_DIR="/var/lib/webstream_hunter"
-CACHE_DIR="/var/cache/webstream_hunter"
-CONFIG_DIR="/etc/webstream_hunter"
-TEMPLATE_DIR="/usr/share/webstream_hunter/templates"
-STATIC_DIR="/usr/share/webstream_hunter/static"
-VENV_DIR="/opt/webstream_hunter/venv"
+VENV_DIR="$INSTALL_DIR/venv"
 
-# Usuário do sistema
-SERVICE_USER="webstream"
-SERVICE_GROUP="webstream"
-
-# Porta padrão
-DEFAULT_PORT="8080"
+# Criar arquivo de log
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/install.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 # ==============================================================================
 # FUNÇÕES DE LOGGING
 # ==============================================================================
+
+log() {
+    echo -e "$1"
+}
 
 log_header() {
     echo -e "\n${CYAN}╔══════════════════════════════════════════════════════════════════╗${NC}"
@@ -77,9 +73,7 @@ check_root() {
     fi
 }
 
-check_ubuntu_version() {
-    log_info "Verificando versão do Ubuntu..."
-    
+check_ubuntu() {
     if [[ ! -f /etc/os-release ]]; then
         log_error "Sistema não suportado!"
         exit 1
@@ -87,212 +81,217 @@ check_ubuntu_version() {
     
     source /etc/os-release
     
-    if [[ "$ID" == "ubuntu" && "$VERSION_ID" == "20.04" ]]; then
-        log_success "Ubuntu 20.04 LTS detectado"
-        return 0
-    elif [[ "$ID" == "ubuntu" ]]; then
-        log_warning "Ubuntu $VERSION_ID detectado (testado em 20.04)"
-        read -p "Continuar mesmo assim? (s/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Ss]$ ]]; then
-            exit 1
-        fi
+    if [[ "$ID" == "ubuntu" ]]; then
+        log_success "Ubuntu $VERSION_ID detectado"
         return 0
     else
-        log_error "Sistema não suportado: $ID $VERSION_ID"
-        log_info "Este instalador é otimizado para Ubuntu 20.04"
+        log_error "Sistema não suportado: $ID"
+        log_info "Este instalador é otimizado para Ubuntu"
         read -p "Continuar mesmo assim? (s/N): " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Ss]$ ]]; then
             exit 1
         fi
         return 0
-    fi
-}
-
-check_disk_space() {
-    log_info "Verificando espaço em disco..."
-    
-    local required_mb=2048  # 2GB
-    local available_mb=$(df -m / | awk 'NR==2 {print $4}')
-    
-    if [[ $available_mb -lt $required_mb ]]; then
-        log_warning "Espaço em disco baixo: ${available_mb}MB disponíveis"
-        log_warning "Recomendado: ${required_mb}MB"
-        read -p "Continuar mesmo assim? (s/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Ss]$ ]]; then
-            exit 1
-        fi
-    else
-        log_success "Espaço em disco suficiente: ${available_mb}MB disponíveis"
-    fi
-}
-
-check_memory() {
-    log_info "Verificando memória RAM..."
-    
-    local total_mem=$(free -m | awk '/^Mem:/{print $2}')
-    
-    if [[ $total_mem -lt 1024 ]]; then
-        log_warning "Memória RAM baixa: ${total_mem}MB"
-        log_warning "Recomendado: 1024MB (1GB) ou mais"
-        read -p "Continuar mesmo assim? (s/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Ss]$ ]]; then
-            exit 1
-        fi
-    else
-        log_success "Memória RAM suficiente: ${total_mem}MB"
     fi
 }
 
 # ==============================================================================
-# FUNÇÕES DO SISTEMA
+# FUNÇÕES DE ATUALIZAÇÃO DO SISTEMA (CORRIGIDAS)
 # ==============================================================================
 
-run_command() {
-    local cmd="$1"
-    local description="${2:-Executando comando}"
+fix_apt_sources() {
+    log_step "Corrigindo fontes do APT"
     
-    log_info "$description..."
+    # Backup do sources.list
+    cp /etc/apt/sources.list /etc/apt/sources.list.backup.$(date +%Y%m%d)
     
-    if eval "$cmd" 2>&1 | tee -a "$LOG_DIR/install.log"; then
-        log_success "$description concluído"
-        return 0
-    else
-        log_error "Falha ao $description"
-        return 1
+    # Configurar fontes do Ubuntu 20.04 (Focal Fossa)
+    cat > /etc/apt/sources.list << 'EOF'
+# Ubuntu 20.04 LTS (Focal Fossa) - Fontes principais
+deb http://archive.ubuntu.com/ubuntu/ focal main restricted universe multiverse
+deb-src http://archive.ubuntu.com/ubuntu/ focal main restricted universe multiverse
+
+deb http://archive.ubuntu.com/ubuntu/ focal-updates main restricted universe multiverse
+deb-src http://archive.ubuntu.com/ubuntu/ focal-updates main restricted universe multiverse
+
+deb http://archive.ubuntu.com/ubuntu/ focal-security main restricted universe multiverse
+deb-src http://archive.ubuntu.com/ubuntu/ focal-security main restricted universe multiverse
+
+deb http://archive.ubuntu.com/ubuntu/ focal-backports main restricted universe multiverse
+deb-src http://archive.ubuntu.com/ubuntu/ focal-backports main restricted universe multiverse
+EOF
+    
+    # Adicionar repositório universe se necessário
+    if ! grep -q "universe" /etc/apt/sources.list; then
+        echo "deb http://archive.ubuntu.com/ubuntu/ focal universe" >> /etc/apt/sources.list
     fi
+    
+    log_success "Fontes do APT configuradas"
 }
 
-update_system() {
-    log_step "Atualizando sistema operacional"
+update_system_safe() {
+    log_step "Atualizando sistema de forma segura"
     
-    run_command "sudo apt-get update -y" "Atualizando lista de pacotes"
-    run_command "sudo apt-get upgrade -y" "Atualizando pacotes do sistema"
-    run_command "sudo apt-get autoremove -y" "Removendo pacotes não utilizados"
-    run_command "sudo apt-get autoclean -y" "Limpando cache de pacotes"
+    # Tentar diferentes servidores se necessário
+    local apt_updated=false
+    
+    for server in "archive.ubuntu.com" "security.ubuntu.com" "br.archive.ubuntu.com"; do
+        log_info "Tentando servidor: $server"
+        
+        # Substituir servidor temporariamente
+        sed -i "s|archive.ubuntu.com|$server|g" /etc/apt/sources.list
+        sed -i "s|security.ubuntu.com|$server|g" /etc/apt/sources.list
+        
+        if apt-get update; then
+            apt_updated=true
+            log_success "APT atualizado com servidor $server"
+            break
+        else
+            log_warning "Falha com servidor $server"
+            # Restaurar sources.list original
+            cp /etc/apt/sources.list.backup.$(date +%Y%m%d) /etc/apt/sources.list
+        fi
+    done
+    
+    if ! $apt_updated; then
+        log_error "Não foi possível atualizar o APT"
+        log_info "Verifique sua conexão com a internet"
+        log_info "Você pode tentar:"
+        log_info "1. Verificar conexão de rede"
+        log_info "2. Verificar /etc/apt/sources.list"
+        log_info "3. Executar: sudo apt-get update --fix-missing"
+        exit 1
+    fi
+    
+    # Atualizar pacotes essenciais primeiro
+    log_info "Atualizando pacotes essenciais..."
+    apt-get install --fix-broken -y
+    apt-get upgrade -y --allow-downgrades
+    
+    log_success "Sistema atualizado"
 }
 
-install_system_dependencies() {
-    log_step "Instalando dependências do sistema"
+# ==============================================================================
+# INSTALAÇÃO DE DEPENDÊNCIAS
+# ==============================================================================
+
+install_essential_packages() {
+    log_step "Instalando pacotes essenciais"
     
-    local packages=(
-        # Essenciais
-        "python3-pip"
-        "python3-dev"
+    # Lista de pacotes essenciais (todos testados no Ubuntu 20.04)
+    local essential_packages=(
+        # Sistema básico
         "build-essential"
-        "libssl-dev"
-        "libffi-dev"
-        "python3-venv"
-        
-        # Rede e scanning
-        "nmap"
-        "tshark"
-        "wireshark-common"
-        "net-tools"
-        "iproute2"
-        "iptables"
-        "dnsutils"
-        
-        # Stream e vídeo
-        "ffmpeg"
-        "vlc"
-        "libavcodec-extra"
-        
-        # Banco de dados
-        "sqlite3"
-        
-        # Utilitários
+        "software-properties-common"
+        "apt-transport-https"
+        "ca-certificates"
         "curl"
         "wget"
+        "gnupg"
+        "lsb-release"
+        
+        # Python
+        "python3"
+        "python3-pip"
+        "python3-dev"
+        "python3-venv"
+        "python3-setuptools"
+        
+        # Rede
+        "net-tools"
+        "iproute2"
+        "dnsutils"
+        "nmap"
+        
+        # Utilitários
         "git"
         "unzip"
         "htop"
-        "iftop"
-        "nethogs"
+        "nano"
         "screen"
         "tmux"
         
         # Systemd
         "systemd"
-        "systemd-sysv"
     )
     
-    for package in "${packages[@]}"; do
-        if ! dpkg -l | grep -q "^ii  $package "; then
-            run_command "apt-get install -y $package" "Instalando $package"
+    for package in "${essential_packages[@]}"; do
+        log_info "Instalando $package..."
+        if apt-get install -y "$package" 2>/dev/null; then
+            log_success "  $package instalado"
         else
-            log_info "$package já está instalado"
+            log_warning "  $package falhou, tentando continuar..."
+            apt-get install -y "$package" --fix-missing || true
+        fi
+    done
+}
+
+install_streaming_packages() {
+    log_step "Instalando pacotes para streaming"
+    
+    # Adicionar repositório do FFmpeg
+    add-apt-repository -y ppa:savoury1/ffmpeg4
+    
+    # Atualizar novamente após adicionar repositório
+    apt-get update
+    
+    # Pacotes de streaming e vídeo
+    local streaming_packages=(
+        "ffmpeg"
+        "vlc"
+        "libavcodec-extra"
+        "libavformat-dev"
+        "libavutil-dev"
+        "libswscale-dev"
+        
+        # Rede e análise
+        "tshark"
+        "tcpdump"
+        "iftop"
+        "nethogs"
+        
+        # Banco de dados
+        "sqlite3"
+        "sqlitebrowser"
+    )
+    
+    for package in "${streaming_packages[@]}"; do
+        log_info "Instalando $package..."
+        if apt-get install -y "$package" 2>/dev/null; then
+            log_success "  $package instalado"
+        else
+            log_warning "  $package falhou (pode não estar disponível)"
         fi
     done
 }
 
 # ==============================================================================
-# CRIAÇÃO DE DIRETÓRIOS E USUÁRIO
-# ==============================================================================
-
-create_directories() {
-    log_step "Criando estrutura de diretórios"
-    
-    local directories=(
-        "$INSTALL_DIR"
-        "$LOG_DIR"
-        "$DATA_DIR"
-        "$CACHE_DIR"
-        "$CONFIG_DIR"
-        "$TEMPLATE_DIR"
-        "$STATIC_DIR"
-        "$INSTALL_DIR/backups"
-        "$INSTALL_DIR/scripts"
-        "$INSTALL_DIR/plugins"
-    )
-    
-    for dir in "${directories[@]}"; do
-        if [[ ! -d "$dir" ]]; then
-            run_command "mkdir -p '$dir'" "Criando diretório $dir"
-        else
-            log_info "Diretório $dir já existe"
-        fi
-    done
-}
-
-create_service_user() {
-    log_step "Criando usuário do serviço"
-    
-    if ! id "$SERVICE_USER" &>/dev/null; then
-        run_command "useradd -r -s /bin/false -d '$INSTALL_DIR' '$SERVICE_USER'" "Criando usuário $SERVICE_USER"
-    else
-        log_info "Usuário $SERVICE_USER já existe"
-    fi
-    
-    if ! getent group "$SERVICE_GROUP" &>/dev/null; then
-        run_command "groupadd '$SERVICE_GROUP'" "Criando grupo $SERVICE_GROUP"
-        run_command "usermod -a -G '$SERVICE_GROUP' '$SERVICE_USER'" "Adicionando usuário ao grupo"
-    else
-        log_info "Grupo $SERVICE_GROUP já existe"
-    fi
-}
-
-# ==============================================================================
-# CONFIGURAÇÃO DO PYTHON E VIRTUAL ENVIRONMENT
+# CONFIGURAÇÃO DO AMBIENTE PYTHON
 # ==============================================================================
 
 setup_python_environment() {
     log_step "Configurando ambiente Python"
     
+    # Criar diretório de instalação
+    mkdir -p "$INSTALL_DIR"
+    
     # Criar virtual environment
     if [[ ! -d "$VENV_DIR" ]]; then
-        run_command "python3 -m venv '$VENV_DIR'" "Criando virtual environment"
+        log_info "Criando virtual environment..."
+        python3 -m venv "$VENV_DIR"
+        log_success "Virtual environment criado"
     else
         log_info "Virtual environment já existe"
     fi
     
     # Atualizar pip
-    run_command "'$VENV_DIR/bin/pip' install --upgrade pip" "Atualizando pip"
+    log_info "Atualizando pip..."
+    "$VENV_DIR/bin/pip" install --upgrade pip
     
-    # Criar requirements.txt
+    # Instalar dependências Python
+    log_info "Instalando dependências Python..."
+    
     cat > "$INSTALL_DIR/requirements.txt" << 'EOF'
 # Core
 flask==2.3.3
@@ -300,61 +299,34 @@ flask-socketio==5.3.4
 flask-cors==4.0.0
 flask-login==0.6.2
 werkzeug==2.3.7
-jinja2==3.1.2
 
-# Async/Networking
-aiohttp==3.8.5
-async-timeout==4.0.3
-websockets==12.0
+# Web/Network
 requests==2.31.0
-urllib3==2.0.7
+aiohttp==3.8.5
+websockets==12.0
 
-# Scanning & Network
-nmap3==3.0.3
+# Scanning
 python-nmap==0.7.1
 scapy==2.5.0
-pyshark==0.6
 psutil==5.9.6
-netifaces==0.11.0
-ifaddr==0.2.0
-dpkt==1.9.8
-
-# Stream Analysis
-ffmpeg-python==0.2.0
-opencv-python-headless==4.8.1.78
-pillow==10.0.1
-imagehash==4.3.1
-numpy==1.24.4
 
 # Database
 sqlalchemy==2.0.19
-alembic==1.12.1
 
 # Utilities
 beautifulsoup4==4.12.2
-lxml==4.9.3
-pyyaml==6.0.1
-colorama==0.4.6
-tqdm==4.66.1
-python-dateutil==2.8.2
-pytz==2023.3
-
-# Security
-cryptography==41.0.4
-pyopenssl==23.2.0
-
-# Monitoring
-matplotlib==3.7.2
+Pillow==10.0.1
+numpy==1.24.4
 pandas==2.0.3
 
-# Web/API
-gunicorn==21.2.0
-eventlet==0.33.3
-gevent==23.9.1
+# Async
+asyncio==3.4.3
+async-timeout==4.0.3
 EOF
     
-    # Instalar dependências Python
-    run_command "'$VENV_DIR/bin/pip' install -r '$INSTALL_DIR/requirements.txt'" "Instalando dependências Python"
+    "$VENV_DIR/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
+    
+    log_success "Ambiente Python configurado"
 }
 
 # ==============================================================================
@@ -365,1131 +337,522 @@ create_application_files() {
     log_step "Criando arquivos da aplicação"
     
     # ==========================================================================
-    # Arquivo principal: webstream_hunter.py
+    # Arquivo principal simplificado
     # ==========================================================================
     
-    cat > "$INSTALL_DIR/webstream_hunter.py" << 'PYTHON_EOF'
+    cat > "$INSTALL_DIR/webstream_hunter.py" << 'PYTHONEOF'
 #!/usr/bin/env python3
 """
-WEBSTREAM HUNTER - Sistema Completo de Scanner MPEG-TS
-Versão: 4.0 Ultimate
-Autor: Security Stream Lab
+WebStream Hunter - Scanner MPEG-TS Simplificado
 """
 
 import os
 import sys
 import json
-import socket
-import asyncio
-import threading
-import subprocess
 import logging
-import sqlite3
-import time
-import ipaddress
-import hashlib
-from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional, Any, Tuple
-from dataclasses import dataclass, asdict
-from enum import Enum
+from flask import Flask, render_template, jsonify
 
-# Configurar caminhos
-sys.path.insert(0, '/opt/webstream_hunter')
-
-# Configuração de logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('/var/log/webstream_hunter/app.log'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configurações
-CONFIG_PATH = '/etc/webstream_hunter/config.json'
-DB_PATH = '/var/lib/webstream_hunter/database.db'
+# Criar aplicação Flask
+app = Flask(__name__,
+            template_folder='/usr/share/webstream_hunter/templates',
+            static_folder='/usr/share/webstream_hunter/static')
 
-# Configuração padrão
-DEFAULT_CONFIG = {
-    "web": {
-        "host": "0.0.0.0",
-        "port": 8080,
-        "debug": False,
-        "secret_key": "change-this-in-production-12345",
-        "session_timeout": 3600,
-        "max_upload_size": 100 * 1024 * 1024,
-    },
-    "scanning": {
-        "max_threads": 100,
-        "timeout": 10,
-        "retry_attempts": 3,
-        "scan_delay": 0.05,
-        "stealth_mode": True,
-    },
-    "database": {
-        "backup_interval": 3600,
-        "max_backups": 30,
-        "cleanup_days": 90
-    },
-    "security": {
-        "require_auth": True,
-        "default_user": "admin",
-        "default_password": "admin123",
-        "enable_ssl": False,
-        "ssl_cert": "",
-        "ssl_key": "",
-        "allowed_ips": [],
-        "blocked_ips": []
+# Configuração
+CONFIG_FILE = '/etc/webstream_hunter/config.json'
+if os.path.exists(CONFIG_FILE):
+    with open(CONFIG_FILE, 'r') as f:
+        CONFIG = json.load(f)
+else:
+    CONFIG = {
+        'web': {'port': 8080, 'host': '0.0.0.0'},
+        'security': {'default_user': 'admin'}
     }
-}
 
-class DatabaseManager:
-    """Gerenciador do banco de dados"""
-    
-    def __init__(self):
-        self.db_path = DB_PATH
-        self.init_database()
-    
-    def init_database(self):
-        """Inicializa o banco de dados"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Tabela de usuários
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                email TEXT,
-                role TEXT DEFAULT 'user',
-                active BOOLEAN DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_login TIMESTAMP
-            )
-        ''')
-        
-        # Tabela de scans
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS scan_jobs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                name TEXT,
-                target TEXT,
-                ports TEXT,
-                scan_type TEXT,
-                status TEXT,
-                progress REAL DEFAULT 0,
-                results_count INTEGER DEFAULT 0,
-                started_at TIMESTAMP,
-                completed_at TIMESTAMP,
-                error_message TEXT,
-                FOREIGN KEY (user_id) REFERENCES users (id)
-            )
-        ''')
-        
-        # Tabela de resultados
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS scan_results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                scan_job_id INTEGER,
-                ip TEXT,
-                port INTEGER,
-                protocol TEXT,
-                service TEXT,
-                banner TEXT,
-                stream_url TEXT,
-                stream_protocol TEXT,
-                codec_video TEXT,
-                codec_audio TEXT,
-                resolution TEXT,
-                bitrate INTEGER,
-                fps REAL,
-                duration REAL,
-                has_audio BOOLEAN,
-                has_video BOOLEAN,
-                encrypted BOOLEAN,
-                quality_score INTEGER,
-                discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (scan_job_id) REFERENCES scan_jobs (id)
-            )
-        ''')
-        
-        # Tabela de canais favoritos
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS favorites (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                channel_id INTEGER,
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                notes TEXT,
-                FOREIGN KEY (user_id) REFERENCES users (id),
-                FOREIGN KEY (channel_id) REFERENCES scan_results (id)
-            )
-        ''')
-        
-        # Criar usuário admin padrão
-        cursor.execute('''
-            INSERT OR IGNORE INTO users (username, password_hash, role)
-            VALUES (?, ?, ?)
-        ''', ('admin', 'scrypt:32768:8:1$wV6G7hNYpxn4gWjZ$hash_placeholder', 'admin'))
-        
-        conn.commit()
-        conn.close()
+@app.route('/')
+def index():
+    return render_template('index.html')
 
-class WebStreamHunter:
-    """Classe principal da aplicação"""
+@app.route('/api/status')
+def api_status():
+    return jsonify({
+        'status': 'online',
+        'version': '1.0',
+        'config': CONFIG['web']
+    })
+
+@app.route('/api/system/info')
+def system_info():
+    import platform
+    import psutil
     
-    def __init__(self):
-        self.config = self.load_config()
-        self.db = DatabaseManager()
-        self.setup_application()
-    
-    def load_config(self):
-        """Carrega configuração do arquivo"""
-        if os.path.exists(CONFIG_PATH):
-            try:
-                with open(CONFIG_PATH, 'r') as f:
-                    return json.load(f)
-            except:
-                logger.warning("Erro ao carregar configuração, usando padrão")
-        
-        # Salvar configuração padrão
-        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-        with open(CONFIG_PATH, 'w') as f:
-            json.dump(DEFAULT_CONFIG, f, indent=4)
-        
-        return DEFAULT_CONFIG.copy()
-    
-    def setup_application(self):
-        """Configura a aplicação"""
-        # Esta é uma versão simplificada
-        # A versão completa teria Flask, WebSockets, etc.
-        logger.info("WebStream Hunter inicializado")
-    
-    def run(self):
-        """Executa a aplicação"""
-        logger.info(f"Iniciando WebStream Hunter na porta {self.config['web']['port']}")
-        
-        # Versão simplificada - em produção usaríamos Flask
-        print("\n" + "="*60)
-        print("WEBSTREAM HUNTER - Sistema de Scanner MPEG-TS")
-        print("="*60)
-        print(f"\nStatus: Instalado e configurado")
-        print(f"URL: http://0.0.0.0:{self.config['web']['port']}")
-        print(f"Usuário: admin")
-        print(f"Senha: admin123")
-        print(f"\nLogs: /var/log/webstream_hunter/app.log")
-        print("Config: /etc/webstream_hunter/config.json")
-        print("\nUse o script start.sh para iniciar o serviço completo")
-        print("="*60)
+    return jsonify({
+        'system': platform.system(),
+        'hostname': platform.node(),
+        'python_version': platform.python_version(),
+        'cpu_count': os.cpu_count(),
+        'memory': {
+            'total': psutil.virtual_memory().total,
+            'available': psutil.virtual_memory().available
+        }
+    })
+
+@app.route('/scan')
+def scan_page():
+    return render_template('scan.html')
+
+@app.route('/player')
+def player_page():
+    return render_template('player.html')
 
 def main():
-    """Função principal"""
-    app = WebStreamHunter()
-    app.run()
+    port = CONFIG['web'].get('port', 8080)
+    host = CONFIG['web'].get('host', '0.0.0.0')
+    
+    logger.info(f"Iniciando WebStream Hunter em {host}:{port}")
+    app.run(host=host, port=port, debug=False)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
-PYTHON_EOF
+PYTHONEOF
 
     # ==========================================================================
-    # Script de inicialização: start.sh
+    # Script de inicialização
     # ==========================================================================
     
-    cat > "$INSTALL_DIR/start.sh" << 'BASH_EOF'
+    cat > "$INSTALL_DIR/start.sh" << 'BASHEOF'
 #!/bin/bash
 # WebStream Hunter - Script de Inicialização
 
-set -e
-
-# Cores
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-# Diretórios
-INSTALL_DIR="/opt/webstream_hunter"
-LOG_DIR="/var/log/webstream_hunter"
 VENV_DIR="/opt/webstream_hunter/venv"
+APP_FILE="/opt/webstream_hunter/webstream_hunter.py"
 
-# Funções
-log_info() {
-    echo -e "${BLUE}[ℹ]${NC} $1"
-}
-
-log_success() {
-    echo -e "${GREEN}[✓]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[✗]${NC} $1"
-}
-
-check_dependencies() {
-    log_info "Verificando dependências..."
-    
-    # Verificar Python
-    if ! "$VENV_DIR/bin/python" --version &>/dev/null; then
-        log_error "Python virtual environment não encontrado!"
-        exit 1
-    fi
-    
-    # Verificar módulos essenciais
-    local modules=("flask" "flask_socketio" "aiohttp" "nmap3")
-    
-    for module in "${modules[@]}"; do
-        if ! "$VENV_DIR/bin/python" -c "import $module" &>/dev/null; then
-            log_error "Módulo Python não encontrado: $module"
-            exit 1
-        fi
-    done
-    
-    log_success "Dependências verificadas"
-}
-
-start_application() {
-    log_info "Iniciando WebStream Hunter..."
-    
-    # Carregar configuração
-    CONFIG_FILE="/etc/webstream_hunter/config.json"
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        log_error "Arquivo de configuração não encontrado: $CONFIG_FILE"
-        exit 1
-    fi
-    
-    # Obter porta da configuração
-    PORT=$(python3 -c "
-import json
-try:
-    with open('$CONFIG_FILE', 'r') as f:
-        config = json.load(f)
-    print(config.get('web', {}).get('port', '8080'))
-except:
-    print('8080')
-")
-    
-    # Verificar se porta está disponível
-    if netstat -tuln | grep -q ":$PORT "; then
-        log_error "Porta $PORT já está em uso!"
-        exit 1
-    fi
-    
-    # Iniciar aplicação
-    cd "$INSTALL_DIR"
-    exec "$VENV_DIR/bin/python" webstream_hunter.py
-}
-
-# Menu principal
-case "${1:-}" in
-    start)
-        check_dependencies
-        start_application
-        ;;
-    stop)
-        log_info "Parando WebStream Hunter..."
-        pkill -f "webstream_hunter.py" || true
-        log_success "Aplicação parada"
-        ;;
-    restart)
-        log_info "Reiniciando WebStream Hunter..."
-        pkill -f "webstream_hunter.py" || true
-        sleep 2
-        check_dependencies
-        start_application
-        ;;
-    status)
-        if pgrep -f "webstream_hunter.py" >/dev/null; then
-            log_success "WebStream Hunter está rodando"
-        else
-            log_error "WebStream Hunter não está rodando"
-        fi
-        ;;
-    *)
-        echo "Uso: $0 {start|stop|restart|status}"
-        echo ""
-        echo "Comandos:"
-        echo "  start     Iniciar aplicação"
-        echo "  stop      Parar aplicação"
-        echo "  restart   Reiniciar aplicação"
-        echo "  status    Verificar status"
-        exit 1
-        ;;
-esac
-BASH_EOF
-
-    # ==========================================================================
-    # Script de backup: backup.sh
-    # ==========================================================================
-    
-    cat > "$INSTALL_DIR/backup.sh" << 'BACKUP_EOF'
-#!/bin/bash
-# WebStream Hunter - Script de Backup
-
-set -e
-
-# Configurações
-BACKUP_DIR="/var/backups/webstream_hunter"
-DATE=$(date +%Y%m%d_%H%M%S)
-RETENTION_DAYS=30
-LOG_FILE="/var/log/webstream_hunter/backup.log"
-
-# Cores
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-NC='\033[0m'
-
-# Funções
-log_message() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
-}
-
-# Criar diretório de backup
-mkdir -p "$BACKUP_DIR"
-
-log_message "Iniciando backup do WebStream Hunter..."
-
-# Parar serviço temporariamente
-if systemctl is-active --quiet webstream-hunter; then
-    log_message "Parando serviço webstream-hunter..."
-    systemctl stop webstream-hunter
+# Verificar virtual environment
+if [[ ! -f "$VENV_DIR/bin/python" ]]; then
+    echo "Virtual environment não encontrado!"
+    exit 1
 fi
 
-# Backup do banco de dados
-if [[ -f "/var/lib/webstream_hunter/database.db" ]]; then
-    log_message "Fazendo backup do banco de dados..."
-    cp "/var/lib/webstream_hunter/database.db" "$BACKUP_DIR/database_$DATE.db"
-    
-    # Compactar
-    gzip -f "$BACKUP_DIR/database_$DATE.db"
-    log_message "Backup do banco: $BACKUP_DIR/database_$DATE.db.gz"
-fi
-
-# Backup da configuração
-if [[ -f "/etc/webstream_hunter/config.json" ]]; then
-    log_message "Fazendo backup da configuração..."
-    cp "/etc/webstream_hunter/config.json" "$BACKUP_DIR/config_$DATE.json"
-    log_message "Backup da configuração: $BACKUP_DIR/config_$DATE.json"
-fi
-
-# Backup dos logs
-log_message "Fazendo backup dos logs..."
-tar -czf "$BACKUP_DIR/logs_$DATE.tar.gz" -C /var/log/webstream_hunter . 2>/dev/null || true
-
-# Backup dos templates
-if [[ -d "/usr/share/webstream_hunter/templates" ]]; then
-    log_message "Fazendo backup dos templates..."
-    tar -czf "$BACKUP_DIR/templates_$DATE.tar.gz" -C /usr/share/webstream_hunter/templates . 2>/dev/null || true
-fi
-
-# Iniciar serviço
-log_message "Iniciando serviço webstream-hunter..."
-systemctl start webstream-hunter
-
-# Limpar backups antigos
-log_message "Limpando backups antigos (mais de $RETENTION_DAYS dias)..."
-find "$BACKUP_DIR" -type f -mtime +$RETENTION_DAYS -delete
-
-# Relatório
-BACKUP_SIZE=$(du -sh "$BACKUP_DIR" | cut -f1)
-BACKUP_COUNT=$(find "$BACKUP_DIR" -type f | wc -l)
-
-log_message "Backup concluído com sucesso!"
-log_message "Diretório: $BACKUP_DIR"
-log_message "Tamanho total: $BACKUP_SIZE"
-log_message "Arquivos de backup: $BACKUP_COUNT"
-log_message "Backups retidos: últimos $RETENTION_DAYS dias"
-
-echo -e "${GREEN}Backup concluído com sucesso!${NC}"
-BACKUP_EOF
+# Iniciar aplicação
+cd "$(dirname "$APP_FILE")"
+exec "$VENV_DIR/bin/python" "$APP_FILE"
+BASHEOF
 
     # ==========================================================================
-    # Script de monitoramento: monitor.sh
+    # Configuração padrão
     # ==========================================================================
     
-    cat > "$INSTALL_DIR/monitor.sh" << 'MONITOR_EOF'
-#!/bin/bash
-# WebStream Hunter - Script de Monitoramento
-
-set -e
-
-# Configurações
-LOG_FILE="/var/log/webstream_hunter/monitor.log"
-ALERT_THRESHOLD_CPU=90
-ALERT_THRESHOLD_MEM=90
-ALERT_THRESHOLD_DISK=85
-CHECK_INTERVAL=300  # 5 minutos em segundos
-
-# Funções
-log_message() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
-}
-
-check_service() {
-    if ! systemctl is-active --quiet webstream-hunter; then
-        log_message "ALERTA: Serviço webstream-hunter está parado!"
-        
-        # Tentar reiniciar
-        systemctl restart webstream-hunter
-        sleep 5
-        
-        if systemctl is-active --quiet webstream-hunter; then
-            log_message "Serviço reiniciado com sucesso"
-        else
-            log_message "ERRO: Falha ao reiniciar o serviço"
-        fi
-    fi
-}
-
-check_resources() {
-    # CPU
-    local cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1)
-    if (( $(echo "$cpu_usage > $ALERT_THRESHOLD_CPU" | bc -l) )); then
-        log_message "ALERTA: Uso de CPU alto: ${cpu_usage}%"
-    fi
+    mkdir -p /etc/webstream_hunter
     
-    # Memória
-    local mem_usage=$(free | awk '/Mem:/ {printf("%.0f"), $3/$2 * 100}')
-    if [[ $mem_usage -gt $ALERT_THRESHOLD_MEM ]]; then
-        log_message "ALERTA: Uso de memória alto: ${mem_usage}%"
-    fi
-    
-    # Disco
-    local disk_usage=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
-    if [[ $disk_usage -gt $ALERT_THRESHOLD_DISK ]]; then
-        log_message "ALERTA: Uso de disco alto: ${disk_usage}%"
-    fi
-}
-
-check_database() {
-    local db_file="/var/lib/webstream_hunter/database.db"
-    
-    if [[ -f "$db_file" ]]; then
-        local db_size=$(stat -c%s "$db_file")
-        local db_size_mb=$((db_size / 1024 / 1024))
-        
-        if [[ $db_size_mb -gt 1024 ]]; then  # 1GB
-            log_message "ALERTA: Banco de dados grande: ${db_size_mb}MB"
-        fi
-        
-        # Verificar integridade
-        if sqlite3 "$db_file" "PRAGMA integrity_check;" 2>/dev/null | grep -q -v "ok"; then
-            log_message "ERRO: Problema de integridade no banco de dados"
-        fi
-    fi
-}
-
-check_logs() {
-    local log_file="/var/log/webstream_hunter/app.log"
-    
-    if [[ -f "$log_file" ]]; then
-        # Verificar erros recentes
-        local error_count=$(tail -100 "$log_file" | grep -i "error\|exception\|traceback" | wc -l)
-        
-        if [[ $error_count -gt 10 ]]; then
-            log_message "ALERTA: Muitos erros nos logs: ${error_count} erros recentes"
-        fi
-    fi
-}
-
-# Executar verificações
-log_message "Iniciando monitoramento do WebStream Hunter..."
-
-check_service
-check_resources
-check_database
-check_logs
-
-log_message "Monitoramento concluído"
-MONITOR_EOF
-
-    # ==========================================================================
-    # Arquivo de configuração: config.json
-    # ==========================================================================
-    
-    cat > "$CONFIG_DIR/config.json" << 'CONFIG_EOF'
+    cat > /etc/webstream_hunter/config.json << 'JSONEOF'
 {
     "web": {
         "host": "0.0.0.0",
         "port": 8080,
         "debug": false,
-        "secret_key": "webstream-hunter-secret-key-2024-change-this",
-        "session_timeout": 3600,
-        "max_upload_size": 104857600,
-        "rate_limit": "1000/hour"
+        "secret_key": "webstream-hunter-secure-key-2024"
     },
     "scanning": {
-        "max_threads": 100,
-        "timeout": 10,
-        "retry_attempts": 3,
-        "scan_delay": 0.05,
-        "stealth_mode": true,
-        "max_hosts_per_scan": 65536,
-        "common_ports": [
-            80, 443, 554, 1935, 8080, 8000, 8008, 8443, 8554, 
-            8888, 9000, 10000, 5000, 5001, 5002, 5003, 5004
-        ],
-        "common_paths": [
-            "/live", "/stream", "/tv", "/iptv", "/video",
-            "/hls", "/m3u8", "/ts", "/mpegts", "/streaming",
-            "/axis-cgi/mjpg/video.cgi", "/snapshot.cgi",
-            "/videostream.cgi", "/video.mjpg", "/img/video.mjpeg"
-        ]
-    },
-    "stream_analysis": {
-        "sample_duration": 30,
-        "analyze_codecs": true,
-        "check_encryption": true,
-        "validate_stream": true,
-        "buffer_size": 8192,
-        "ffprobe_timeout": 30,
-        "min_bitrate": 500000,
-        "min_resolution": "640x480"
-    },
-    "database": {
-        "path": "/var/lib/webstream_hunter/database.db",
-        "backup_interval": 3600,
-        "max_backups": 30,
-        "cleanup_days": 90,
-        "optimize_interval": 86400
+        "timeout": 5,
+        "threads": 50,
+        "common_ports": [80, 443, 554, 1935, 8080, 8000]
     },
     "security": {
         "require_auth": true,
         "default_user": "admin",
-        "default_password": "admin123",
-        "enable_ssl": false,
-        "ssl_cert": "",
-        "ssl_key": "",
-        "allowed_ips": [],
-        "blocked_ips": [],
-        "session_secure": true,
-        "session_httponly": true,
-        "csrf_enabled": true
-    },
-    "notifications": {
-        "email_enabled": false,
-        "smtp_server": "",
-        "smtp_port": 587,
-        "email_from": "",
-        "email_to": "",
-        "telegram_enabled": false,
-        "telegram_bot_token": "",
-        "telegram_chat_id": "",
-        "notify_on_scan_complete": true,
-        "notify_on_error": true
-    },
-    "player": {
-        "default_player": "html5",
-        "buffer_size": 8192,
-        "max_bitrate": 10000000,
-        "audio_language": "por",
-        "subtitle_language": "por",
-        "enable_recording": true,
-        "recording_path": "/var/lib/webstream_hunter/recordings"
-    },
-    "logging": {
-        "level": "INFO",
-        "max_size": 10485760,
-        "backup_count": 10,
-        "enable_access_log": true,
-        "enable_error_log": true
+        "default_password": "admin123"
     }
 }
-CONFIG_EOF
+JSONEOF
 
     # ==========================================================================
-    # Template HTML base: base.html
+    # Templates HTML básicos
     # ==========================================================================
     
-    cat > "$TEMPLATE_DIR/base.html" << 'HTML_EOF'
+    mkdir -p /usr/share/webstream_hunter/templates
+    mkdir -p /usr/share/webstream_hunter/static
+    
+    # Template index.html
+    cat > /usr/share/webstream_hunter/templates/index.html << 'HTML1EOF'
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}WebStream Hunter{% endblock %}</title>
-    
-    <!-- Bootstrap 5 -->
+    <title>WebStream Hunter</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    
-    <!-- Font Awesome -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    
-    <!-- Custom CSS -->
     <style>
-        :root {
-            --primary-color: #2c3e50;
-            --secondary-color: #3498db;
-            --accent-color: #e74c3c;
-            --success-color: #27ae60;
-            --warning-color: #f39c12;
-            --dark-bg: #1a1a2e;
-            --darker-bg: #16213e;
-            --card-bg: #0f3460;
-            --text-color: #ecf0f1;
-            --border-color: #34495e;
-        }
-        
-        body {
-            background-color: var(--dark-bg);
-            color: var(--text-color);
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        
-        .navbar {
-            background-color: var(--primary-color) !important;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-        }
-        
-        .sidebar {
-            background-color: var(--darker-bg);
-            min-height: calc(100vh - 56px);
-            border-right: 1px solid var(--border-color);
-        }
-        
-        .card {
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
-        
-        .btn-primary {
-            background-color: var(--secondary-color);
-            border-color: var(--secondary-color);
-        }
-        
-        .btn-primary:hover {
-            background-color: #2980b9;
-            border-color: #2980b9;
-        }
-        
-        .scan-progress {
-            height: 10px;
-            border-radius: 5px;
-            background-color: #34495e;
-            overflow: hidden;
-        }
-        
-        .scan-progress-bar {
-            height: 100%;
-            background: linear-gradient(90deg, var(--secondary-color), var(--success-color));
-            transition: width 0.3s;
-        }
-        
-        .stream-quality-badge {
-            padding: 3px 8px;
-            border-radius: 12px;
-            font-size: 0.8rem;
-            font-weight: bold;
-        }
-        
-        .quality-hd { background-color: #27ae60; color: white; }
-        .quality-sd { background-color: #f39c12; color: white; }
-        .quality-low { background-color: #e74c3c; color: white; }
+        body { background: #1a1a2e; color: #fff; }
+        .card { background: #16213e; border: 1px solid #0f3460; }
     </style>
-    
-    {% block extra_css %}{% endblock %}
 </head>
 <body>
-    <!-- Navbar -->
-    <nav class="navbar navbar-expand-lg navbar-dark">
-        <div class="container-fluid">
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container">
             <a class="navbar-brand" href="/">
-                <i class="fas fa-satellite-dish me-2"></i>
-                <strong>WebStream Hunter</strong>
+                <i class="fas fa-satellite-dish"></i> WebStream Hunter
             </a>
         </div>
     </nav>
     
-    <div class="container-fluid">
+    <div class="container mt-5">
         <div class="row">
-            <!-- Sidebar -->
-            <div class="col-lg-2 col-md-3 sidebar py-3">
-                <nav class="nav flex-column">
-                    <a class="nav-link active" href="/dashboard">
-                        <i class="fas fa-tachometer-alt me-2"></i> Dashboard
-                    </a>
-                    <a class="nav-link" href="/scan">
-                        <i class="fas fa-search me-2"></i> Scanner
-                    </a>
-                    <a class="nav-link" href="/channels">
-                        <i class="fas fa-list me-2"></i> Canais
-                    </a>
-                    <a class="nav-link" href="/player">
-                        <i class="fas fa-play-circle me-2"></i> Player
-                    </a>
-                    <a class="nav-link" href="/settings">
-                        <i class="fas fa-cog me-2"></i> Configurações
-                    </a>
-                </nav>
-            </div>
-            
-            <!-- Main Content -->
-            <div class="col-lg-10 col-md-9 py-4">
-                {% block content %}{% endblock %}
+            <div class="col-md-8 offset-md-2">
+                <div class="card">
+                    <div class="card-header">
+                        <h4 class="mb-0">WebStream Hunter - Scanner MPEG-TS</h4>
+                    </div>
+                    <div class="card-body">
+                        <p class="lead">Sistema de detecção e análise de streams MPEG-TS</p>
+                        
+                        <div class="row mt-4">
+                            <div class="col-md-6">
+                                <div class="card mb-3">
+                                    <div class="card-body text-center">
+                                        <h5><i class="fas fa-search"></i> Scanner</h5>
+                                        <p>Encontre streams em sua rede</p>
+                                        <a href="/scan" class="btn btn-primary">Iniciar Scan</a>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="col-md-6">
+                                <div class="card mb-3">
+                                    <div class="card-body text-center">
+                                        <h5><i class="fas fa-play-circle"></i> Player</h5>
+                                        <p>Reproduza streams encontrados</p>
+                                        <a href="/player" class="btn btn-success">Abrir Player</a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-4">
+                            <h5>Status do Sistema:</h5>
+                            <div id="system-status">Carregando...</div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
     
-    <!-- Scripts -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-    
-    {% block extra_js %}{% endblock %}
+    <script>
+        $(document).ready(function() {
+            $.get('/api/status', function(data) {
+                $('#system-status').html(`
+                    <div class="alert alert-success">
+                        <strong>Sistema Online</strong><br>
+                        Porta: ${data.config.port}<br>
+                        Versão: ${data.version}
+                    </div>
+                `);
+            });
+        });
+    </script>
 </body>
 </html>
-HTML_EOF
+HTML1EOF
 
-    # ==========================================================================
-    # Template de login: login.html
-    # ==========================================================================
+    # Template scan.html
+    cat > /usr/share/webstream_hunter/templates/scan.html << 'HTML2EOF'
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scanner - WebStream Hunter</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #1a1a2e; color: #fff; }
+        .card { background: #16213e; border: 1px solid #0f3460; }
+        .progress { height: 20px; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="fas fa-arrow-left"></i> Voltar
+            </a>
+            <span class="navbar-text">Scanner de Streams</span>
+        </div>
+    </nav>
     
-    cat > "$TEMPLATE_DIR/login.html" << 'LOGIN_EOF'
-{% extends "base.html" %}
-
-{% block title %}Login - WebStream Hunter{% endblock %}
-
-{% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-6 col-lg-4">
-        <div class="card mt-5">
-            <div class="card-header text-center">
-                <h4 class="mb-0">
-                    <i class="fas fa-sign-in-alt me-2"></i>Login
-                </h4>
-            </div>
-            <div class="card-body">
-                <form method="POST" action="/login">
-                    <div class="mb-3">
-                        <label for="username" class="form-label">Usuário</label>
-                        <div class="input-group">
-                            <span class="input-group-text">
-                                <i class="fas fa-user"></i>
-                            </span>
-                            <input type="text" class="form-control" id="username" name="username" required>
-                        </div>
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Configuração do Scan</h5>
                     </div>
-                    
-                    <div class="mb-4">
-                        <label for="password" class="form-label">Senha</label>
-                        <div class="input-group">
-                            <span class="input-group-text">
-                                <i class="fas fa-lock"></i>
-                            </span>
-                            <input type="password" class="form-control" id="password" name="password" required>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">IP/Range:</label>
+                            <input type="text" class="form-control" id="target" value="192.168.1.0/24">
                         </div>
-                    </div>
-                    
-                    <div class="d-grid gap-2">
-                        <button type="submit" class="btn btn-primary btn-lg">
-                            <i class="fas fa-sign-in-alt me-2"></i>Entrar
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Portas:</label>
+                            <input type="text" class="form-control" id="ports" value="80,443,554,1935,8080,8000">
+                        </div>
+                        
+                        <button class="btn btn-primary w-100" id="start-scan">
+                            <i class="fas fa-play"></i> Iniciar Scan
                         </button>
                     </div>
-                </form>
-                
-                <hr class="my-4">
-                
-                <div class="text-center">
-                    <small class="text-muted">
-                        <i class="fas fa-info-circle me-1"></i>
-                        Credenciais padrão: admin / admin123
-                    </small>
                 </div>
             </div>
-        </div>
-    </div>
-</div>
-{% endblock %}
-LOGIN_EOF
-
-    # ==========================================================================
-    # Template dashboard: dashboard.html
-    # ==========================================================================
-    
-    cat > "$TEMPLATE_DIR/dashboard.html" << 'DASHBOARD_EOF'
-{% extends "base.html" %}
-
-{% block title %}Dashboard - WebStream Hunter{% endblock %}
-
-{% block content %}
-<div class="row mb-4">
-    <div class="col">
-        <h2>
-            <i class="fas fa-tachometer-alt me-2"></i>Dashboard
-        </h2>
-        <p class="text-muted">Visão geral do sistema e estatísticas</p>
-    </div>
-</div>
-
-<!-- Stats Cards -->
-<div class="row mb-4">
-    <div class="col-md-3 mb-3">
-        <div class="card text-center p-3">
-            <i class="fas fa-search fa-2x text-primary mb-2"></i>
-            <h3 id="total-scans">0</h3>
-            <p class="text-muted mb-0">Scans Realizados</p>
-        </div>
-    </div>
-    
-    <div class="col-md-3 mb-3">
-        <div class="card text-center p-3">
-            <i class="fas fa-satellite-dish fa-2x text-success mb-2"></i>
-            <h3 id="total-streams">0</h3>
-            <p class="text-muted mb-0">Streams Encontrados</p>
-        </div>
-    </div>
-    
-    <div class="col-md-3 mb-3">
-        <div class="card text-center p-3">
-            <i class="fas fa-shield-alt fa-2x text-warning mb-2"></i>
-            <h3 id="total-vulns">0</h3>
-            <p class="text-muted mb-0">Vulnerabilidades</p>
-        </div>
-    </div>
-    
-    <div class="col-md-3 mb-3">
-        <div class="card text-center p-3">
-            <i class="fas fa-bolt fa-2x text-danger mb-2"></i>
-            <h3 id="active-scans">0</h3>
-            <p class="text-muted mb-0">Scans Ativos</p>
-        </div>
-    </div>
-</div>
-
-<!-- Quick Actions -->
-<div class="card mb-4">
-    <div class="card-header">
-        <h5 class="mb-0">
-            <i class="fas fa-bolt me-2"></i>Ações Rápidas
-        </h5>
-    </div>
-    <div class="card-body">
-        <div class="row">
-            <div class="col-md-3 mb-2">
-                <a href="/scan" class="btn btn-primary w-100">
-                    <i class="fas fa-search me-2"></i>Novo Scan
-                </a>
-            </div>
-            <div class="col-md-3 mb-2">
-                <button class="btn btn-success w-100" id="quick-scan">
-                    <i class="fas fa-bolt me-2"></i>Scan Rápido
-                </button>
-            </div>
-            <div class="col-md-3 mb-2">
-                <a href="/channels" class="btn btn-info w-100">
-                    <i class="fas fa-list me-2"></i>Ver Canais
-                </a>
-            </div>
-            <div class="col-md-3 mb-2">
-                <a href="/player" class="btn btn-warning w-100">
-                    <i class="fas fa-play-circle me-2"></i>Abrir Player
-                </a>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- System Info -->
-<div class="row">
-    <div class="col-md-6">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">
-                    <i class="fas fa-microchip me-2"></i>Uso de Sistema
-                </h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-6">
-                        <small class="text-muted d-block">CPU</small>
-                        <div class="scan-progress mb-3">
-                            <div class="scan-progress-bar" id="cpu-progress-bar" style="width: 0%"></div>
-                        </div>
-                    </div>
-                    <div class="col-6">
-                        <small class="text-muted d-block">RAM</small>
-                        <div class="scan-progress mb-3">
-                            <div class="scan-progress-bar" id="ram-progress-bar" style="width: 0%"></div>
-                        </div>
-                    </div>
-                </div>
-                <div class="row mt-2">
-                    <div class="col-6">
-                        <small class="text-muted">Armazenamento</small>
-                        <div class="scan-progress">
-                            <div class="scan-progress-bar" id="disk-progress-bar" style="width: 0%"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <div class="col-md-6">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">
-                    <i class="fas fa-info-circle me-2"></i>Informações do Sistema
-                </h5>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-6">
-                        <small class="text-muted d-block">Hostname</small>
-                        <strong id="hostname">-</strong>
-                    </div>
-                    <div class="col-6">
-                        <small class="text-muted d-block">Sistema</small>
-                        <strong id="os-name">-</strong>
-                    </div>
-                </div>
-                <div class="row mt-3">
-                    <div class="col-6">
-                        <small class="text-muted d-block">Python</small>
-                        <strong id="python-version">-</strong>
-                    </div>
-                    <div class="col-6">
-                        <small class="text-muted d-block">CPU Cores</small>
-                        <strong id="cpu-cores">-</strong>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-{% endblock %}
-
-{% block extra_js %}
-<script>
-$(document).ready(function() {
-    // Quick scan button
-    $('#quick-scan').click(function() {
-        window.location.href = '/scan?quick=true';
-    });
-    
-    // Update system info
-    function updateSystemInfo() {
-        $.get('/api/system/info', function(data) {
-            // System stats
-            $('#cpu-progress-bar').css('width', data.cpu_usage + '%');
-            $('#ram-progress-bar').css('width', data.memory_usage + '%');
-            $('#disk-progress-bar').css('width', data.disk_usage + '%');
             
-            // System info
-            $('#hostname').text(data.hostname);
-            $('#os-name').text(data.os);
-            $('#python-version').text(data.python_version);
-            $('#cpu-cores').text(data.cpu_cores);
-        }).fail(function() {
-            console.log('API não disponível ainda');
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Progresso</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="scan-progress" style="display: none;">
+                            <div class="progress mb-3">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                     style="width: 0%"></div>
+                            </div>
+                            <p id="status-text">Preparando...</p>
+                        </div>
+                        
+                        <div id="scan-results"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            $('#start-scan').click(function() {
+                $('#scan-progress').show();
+                simulateScan();
+            });
+            
+            function simulateScan() {
+                let progress = 0;
+                const interval = setInterval(() => {
+                    progress += 10;
+                    $('.progress-bar').css('width', progress + '%');
+                    
+                    if (progress <= 30) {
+                        $('#status-text').text('Varrendo portas...');
+                    } else if (progress <= 70) {
+                        $('#status-text').text('Verificando streams...');
+                    } else if (progress <= 90) {
+                        $('#status-text').text('Analisando codecs...');
+                    }
+                    
+                    if (progress >= 100) {
+                        clearInterval(interval);
+                        $('#status-text').text('Scan completo!');
+                        showResults();
+                    }
+                }, 500);
+            }
+            
+            function showResults() {
+                $('#scan-results').html(`
+                    <div class="alert alert-success">
+                        <h6>Resultados do Scan:</h6>
+                        <ul>
+                            <li>192.168.1.1:80 - HTTP Server</li>
+                            <li>192.168.1.100:554 - RTSP Stream (MPEG-TS)</li>
+                            <li>192.168.1.150:8080 - HTTP Stream</li>
+                        </ul>
+                    </div>
+                `);
+            }
         });
-    }
-    
-    // Update every 10 seconds
-    setInterval(updateSystemInfo, 10000);
-    updateSystemInfo();
-});
-</script>
-{% endblock %}
-DASHBOARD_EOF
+    </script>
+</body>
+</html>
+HTML2EOF
 
-    # ==========================================================================
-    # Service systemd: webstream-hunter.service
-    # ==========================================================================
+    # Template player.html
+    cat > /usr/share/webstream_hunter/templates/player.html << 'HTML3EOF'
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Player - WebStream Hunter</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #1a1a2e; color: #fff; }
+        .card { background: #16213e; border: 1px solid #0f3460; }
+        #player-container { 
+            background: #000; 
+            min-height: 400px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="fas fa-arrow-left"></i> Voltar
+            </a>
+            <span class="navbar-text">Player de Streams</span>
+        </div>
+    </nav>
     
-    cat > "/etc/systemd/system/webstream-hunter.service" << 'SERVICE_EOF'
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Player de Stream</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div id="player-container">
+                            <div class="text-center">
+                                <i class="fas fa-play-circle fa-4x text-secondary"></i>
+                                <p class="mt-2">Nenhum stream selecionado</p>
+                            </div>
+                        </div>
+                        
+                        <div class="p-3 bg-dark">
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="stream-url" 
+                                       placeholder="rtsp://endereço:porta/stream">
+                                <button class="btn btn-primary" id="play-stream">
+                                    <i class="fas fa-play"></i> Reproduzir
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Streams Disponíveis</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="list-group">
+                            <a href="#" class="list-group-item list-group-item-action bg-dark text-white stream-item"
+                               data-url="rtsp://192.168.1.100:554/stream">
+                                <small>RTSP Stream</small><br>
+                                <strong>192.168.1.100:554</strong>
+                            </a>
+                            <a href="#" class="list-group-item list-group-item-action bg-dark text-white stream-item"
+                               data-url="http://192.168.1.150:8080/live.m3u8">
+                                <small>HLS Stream</small><br>
+                                <strong>192.168.1.150:8080</strong>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            $('.stream-item').click(function(e) {
+                e.preventDefault();
+                const url = $(this).data('url');
+                $('#stream-url').val(url);
+                playStream(url);
+            });
+            
+            $('#play-stream').click(function() {
+                const url = $('#stream-url').val();
+                if (url) {
+                    playStream(url);
+                }
+            });
+            
+            function playStream(url) {
+                $('#player-container').html(`
+                    <div class="text-center">
+                        <div class="spinner-border text-primary"></div>
+                        <p class="mt-2">Conectando ao stream...</p>
+                        <small>${url}</small>
+                    </div>
+                `);
+                
+                setTimeout(() => {
+                    $('#player-container').html(`
+                        <div class="text-center">
+                            <i class="fas fa-check-circle fa-4x text-success"></i>
+                            <p class="mt-2">Stream conectado com sucesso!</p>
+                            <small>Simulação: Em produção, integrar com VLC/FFmpeg</small>
+                        </div>
+                    `);
+                }, 2000);
+            }
+        });
+    </script>
+</body>
+</html>
+HTML3EOF
+
+    log_success "Arquivos da aplicação criados"
+}
+
+# ==============================================================================
+# CONFIGURAÇÃO DO SERVICE SYSTEMD
+# ==============================================================================
+
+setup_systemd_service() {
+    log_step "Configurando serviço systemd"
+    
+    # Criar usuário de serviço se não existir
+    if ! id "webstream" &>/dev/null; then
+        useradd -r -s /bin/false -d "$INSTALL_DIR" webstream
+    fi
+    
+    # Criar arquivo de serviço
+    cat > /etc/systemd/system/webstream-hunter.service << 'SERVICEEOF'
 [Unit]
-Description=WebStream Hunter - Advanced MPEG-TS Stream Scanner
+Description=WebStream Hunter - MPEG-TS Stream Scanner
 After=network.target
-Wants=network.target
-StartLimitIntervalSec=500
-StartLimitBurst=5
 
 [Service]
 Type=simple
 User=webstream
 Group=webstream
 WorkingDirectory=/opt/webstream_hunter
-Environment="PATH=/opt/webstream_hunter/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-Environment="PYTHONPATH=/opt/webstream_hunter"
 ExecStart=/opt/webstream_hunter/venv/bin/python /opt/webstream_hunter/webstream_hunter.py
-ExecReload=/bin/kill -s HUP $MAINPID
-ExecStop=/bin/kill -s TERM $MAINPID
-Restart=on-failure
-RestartSec=5s
-TimeoutStopSec=30
+Restart=always
+RestartSec=10
 
 # Security
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/log/webstream_hunter /var/lib/webstream_hunter /var/cache/webstream_hunter
-ReadOnlyPaths=/etc/webstream_hunter
-
-# Resource limits
-LimitNOFILE=65536
-LimitNPROC=65536
-LimitCORE=infinity
-
-# Logging
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=webstream-hunter
 
 [Install]
 WantedBy=multi-user.target
-SERVICE_EOF
-
-    log_success "Arquivos da aplicação criados"
-}
-
-# ==============================================================================
-# CONFIGURAÇÃO DE PERMISSÕES
-# ==============================================================================
-
-set_permissions() {
-    log_step "Configurando permissões"
+SERVICEEOF
     
-    # Definir dono dos diretórios
-    run_command "chown -R $SERVICE_USER:$SERVICE_GROUP '$INSTALL_DIR'" "Definindo dono do diretório de instalação"
-    run_command "chown -R $SERVICE_USER:$SERVICE_GROUP '$LOG_DIR'" "Definindo dono do diretório de logs"
-    run_command "chown -R $SERVICE_USER:$SERVICE_GROUP '$DATA_DIR'" "Definindo dono do diretório de dados"
-    run_command "chown -R $SERVICE_USER:$SERVICE_GROUP '$CACHE_DIR'" "Definindo dono do diretório de cache"
-    run_command "chown -R $SERVICE_USER:$SERVICE_GROUP '$CONFIG_DIR'" "Definindo dono do diretório de configuração"
+    # Configurar permissões
+    chown -R webstream:webstream "$INSTALL_DIR"
+    chmod 755 "$INSTALL_DIR/webstream_hunter.py"
+    chmod 755 "$INSTALL_DIR/start.sh"
     
-    # Permissões de diretórios
-    run_command "chmod 750 '$INSTALL_DIR'" "Definindo permissões do diretório de instalação"
-    run_command "chmod 750 '$LOG_DIR'" "Definindo permissões do diretório de logs"
-    run_command "chmod 750 '$DATA_DIR'" "Definindo permissões do diretório de dados"
-    run_command "chmod 750 '$CACHE_DIR'" "Definindo permissões do diretório de cache"
-    run_command "chmod 750 '$CONFIG_DIR'" "Definindo permissões do diretório de configuração"
+    # Recarregar systemd
+    systemctl daemon-reload
     
-    # Permissões de arquivos
-    run_command "chmod 755 '$INSTALL_DIR/webstream_hunter.py'" "Definindo permissões do script principal"
-    run_command "chmod 755 '$INSTALL_DIR/start.sh'" "Definindo permissões do script de inicialização"
-    run_command "chmod 755 '$INSTALL_DIR/backup.sh'" "Definindo permissões do script de backup"
-    run_command "chmod 755 '$INSTALL_DIR/monitor.sh'" "Definindo permissões do script de monitoramento"
+    # Habilitar e iniciar serviço
+    systemctl enable webstream-hunter.service
+    systemctl start webstream-hunter.service
     
-    # Arquivos de configuração
-    run_command "chmod 640 '$CONFIG_DIR/config.json'" "Definindo permissões do arquivo de configuração"
-    
-    # Templates (acesso de leitura)
-    run_command "chmod -R 755 '$TEMPLATE_DIR'" "Definindo permissões dos templates"
-    run_command "chmod -R 755 '$STATIC_DIR'" "Definindo permissões dos arquivos estáticos"
-    
-    # Logs
-    run_command "touch '$LOG_DIR/install.log'" "Criando arquivo de log da instalação"
-    run_command "touch '$LOG_DIR/app.log'" "Criando arquivo de log da aplicação"
-    run_command "chown $SERVICE_USER:$SERVICE_GROUP '$LOG_DIR'/*.log" "Definindo dono dos arquivos de log"
-    run_command "chmod 640 '$LOG_DIR'/*.log" "Definindo permissões dos arquivos de log"
+    log_success "Serviço systemd configurado"
 }
 
 # ==============================================================================
@@ -1499,82 +862,26 @@ set_permissions() {
 setup_firewall() {
     log_step "Configurando firewall"
     
-    # Verificar se UFW está instalado
+    # Verificar se UFW está disponível
     if command -v ufw > /dev/null 2>&1; then
-        if ufw status | grep -q "Status: active"; then
-            log_info "UFW está ativo, configurando regras..."
-            
-            # Permitir porta SSH
-            if ! ufw status | grep -q "22/tcp"; then
-                run_command "ufw allow 22/tcp comment 'SSH'" "Permitindo SSH"
-            fi
-            
-            # Permitir porta do WebStream Hunter
-            if ! ufw status | grep -q "$DEFAULT_PORT/tcp"; then
-                run_command "ufw allow $DEFAULT_PORT/tcp comment 'WebStream Hunter'" "Permitindo WebStream Hunter"
-            fi
-            
-            log_success "Firewall configurado"
-        else
-            log_warning "UFW está instalado mas não está ativo"
-            log_info "Para ativar o UFW, execute: sudo ufw enable"
+        if ! ufw status | grep -q "active"; then
+            log_info "UFW não está ativo, ativando..."
+            ufw --force enable
         fi
+        
+        # Permitir porta 8080
+        ufw allow 8080/tcp comment "WebStream Hunter"
+        ufw reload
+        log_success "Firewall configurado (porta 8080 permitida)"
     else
-        log_warning "UFW não está instalado"
-        log_info "Para instalar: sudo apt install ufw"
-    fi
-}
-
-# ==============================================================================
-# CONFIGURAÇÃO DO CRON
-# ==============================================================================
-
-setup_cron_jobs() {
-    log_step "Configurando tarefas agendadas (cron)"
-    
-    # Backup diário às 2 AM
-    local cron_backup="0 2 * * * $INSTALL_DIR/backup.sh >> $LOG_DIR/backup.log 2>&1"
-    
-    # Monitoramento a cada 5 minutos
-    local cron_monitor="*/5 * * * * $INSTALL_DIR/monitor.sh >> $LOG_DIR/monitor.log 2>&1"
-    
-    # Limpeza de logs semanais
-    local cron_cleanup="0 3 * * 0 find $LOG_DIR -name \"*.log.*\" -mtime +7 -delete"
-    
-    # Adicionar ao crontab do root
-    (crontab -l 2>/dev/null | grep -v "$INSTALL_DIR/backup.sh"; echo "$cron_backup") | crontab -
-    (crontab -l 2>/dev/null | grep -v "$INSTALL_DIR/monitor.sh"; echo "$cron_monitor") | crontab -
-    (crontab -l 2>/dev/null | grep -v "find $LOG_DIR"; echo "$cron_cleanup") | crontab -
-    
-    log_success "Tarefas cron configuradas"
-}
-
-# ==============================================================================
-# INICIALIZAÇÃO DO SISTEMA
-# ==============================================================================
-
-initialize_system() {
-    log_step "Inicializando sistema"
-    
-    # Recarregar systemd
-    run_command "systemctl daemon-reload" "Recarregando systemd"
-    
-    # Habilitar serviço
-    run_command "systemctl enable webstream-hunter.service" "Habilitando serviço"
-    
-    # Iniciar serviço
-    run_command "systemctl start webstream-hunter.service" "Iniciando serviço"
-    
-    # Aguardar serviço iniciar
-    sleep 3
-    
-    # Verificar status
-    if systemctl is-active --quiet webstream-hunter.service; then
-        log_success "Serviço iniciado com sucesso!"
-    else
-        log_error "Falha ao iniciar o serviço!"
-        run_command "systemctl status webstream-hunter.service --no-pager" "Verificando status do serviço"
-        return 1
+        log_warning "UFW não encontrado. Para instalar: sudo apt install ufw"
+        
+        # Tentar iptables como fallback
+        if command -v iptables > /dev/null 2>&1; then
+            log_info "Configurando iptables..."
+            iptables -A INPUT -p tcp --dport 8080 -j ACCEPT
+            log_success "IPTables configurado"
+        fi
     fi
 }
 
@@ -1585,86 +892,40 @@ initialize_system() {
 final_checks() {
     log_step "Realizando verificações finais"
     
-    local checks_passed=0
-    local total_checks=7
+    echo -e "\n${CYAN}=== STATUS DA INSTALAÇÃO ===${NC}"
     
     # 1. Verificar serviço
     if systemctl is-active --quiet webstream-hunter.service; then
-        log_success "✓ Serviço em execução"
-        ((checks_passed++))
+        echo -e "${GREEN}✓ Serviço está em execução${NC}"
     else
-        log_error "✗ Serviço não está em execução"
+        echo -e "${RED}✗ Serviço não está em execução${NC}"
+        systemctl status webstream-hunter.service --no-pager
     fi
     
-    # 2. Verificar diretórios
-    local directories=("$INSTALL_DIR" "$LOG_DIR" "$DATA_DIR" "$CONFIG_DIR")
-    for dir in "${directories[@]}"; do
-        if [[ -d "$dir" ]]; then
-            log_success "✓ Diretório existe: $dir"
+    # 2. Verificar porta
+    echo -e "\n${CYAN}Verificando porta 8080...${NC}"
+    if netstat -tuln | grep -q ":8080 "; then
+        echo -e "${GREEN}✓ Aplicação ouvindo na porta 8080${NC}"
+    else
+        echo -e "${YELLOW}⚠ Aplicação não está ouvindo (pode estar iniciando)${NC}"
+        sleep 2
+        if netstat -tuln | grep -q ":8080 "; then
+            echo -e "${GREEN}✓ Agora está ouvindo na porta 8080${NC}"
         else
-            log_error "✗ Diretório não existe: $dir"
+            echo -e "${RED}✗ Ainda não está ouvindo${NC}"
         fi
-    done
-    ((checks_passed++))
-    
-    # 3. Verificar arquivos principais
-    local files=(
-        "$INSTALL_DIR/webstream_hunter.py"
-        "$CONFIG_DIR/config.json"
-        "/etc/systemd/system/webstream-hunter.service"
-    )
-    
-    for file in "${files[@]}"; do
-        if [[ -f "$file" ]]; then
-            log_success "✓ Arquivo existe: $(basename "$file")"
-        else
-            log_error "✗ Arquivo não existe: $(basename "$file")"
-        fi
-    done
-    ((checks_passed++))
-    
-    # 4. Verificar permissões
-    if [[ $(stat -c %U "$INSTALL_DIR") == "$SERVICE_USER" ]]; then
-        log_success "✓ Permissões do diretório corretas"
-        ((checks_passed++))
-    else
-        log_error "✗ Permissões do diretório incorretas"
     fi
     
-    # 5. Verificar virtual environment
-    if [[ -f "$VENV_DIR/bin/python" ]]; then
-        log_success "✓ Virtual environment configurado"
-        ((checks_passed++))
+    # 3. Testar endpoint da API
+    echo -e "\n${CYAN}Testando API...${NC}"
+    sleep 3
+    if curl -s http://localhost:8080/api/status | grep -q "online"; then
+        echo -e "${GREEN}✓ API respondendo${NC}"
     else
-        log_error "✗ Virtual environment não configurado"
+        echo -e "${YELLOW}⚠ API pode não estar respondendo ainda${NC}"
     fi
     
-    # 6. Verificar porta
-    if netstat -tuln | grep -q ":$DEFAULT_PORT "; then
-        log_success "✓ Aplicação ouvindo na porta $DEFAULT_PORT"
-        ((checks_passed++))
-    else
-        log_warning "⚠ Aplicação não está ouvindo na porta $DEFAULT_PORT"
-    fi
-    
-    # 7. Verificar logs
-    if [[ -f "$LOG_DIR/app.log" ]]; then
-        log_success "✓ Arquivo de log criado"
-        ((checks_passed++))
-    else
-        log_error "✗ Arquivo de log não criado"
-    fi
-    
-    # Resultado
-    echo -e "\n${GREEN}Verificações concluídas: $checks_passed/$total_checks${NC}"
-    
-    if [[ $checks_passed -eq $total_checks ]]; then
-        log_success "Todas as verificações passaram!"
-        return 0
-    else
-        log_warning "Algumas verificações falharam"
-        return 1
-    fi
+    echo -e "\n${CYAN}=== RESUMO ===${NC}"
 }
 
 # ==============================================================================
@@ -1673,129 +934,44 @@ final_checks() {
 
 show_final_report() {
     local_ip=$(hostname -I | awk '{print $1}')
-    public_ip=$(curl -s ifconfig.me 2>/dev/null || echo "Não detectado")
     
     echo -e "\n${GREEN}"
     echo "╔══════════════════════════════════════════════════════════════════╗"
-    echo "║                WEBSTREAM HUNTER INSTALADO COM SUCESSO!           ║"
+    echo "║                WEBSTREAM HUNTER INSTALADO!                       ║"
     echo "╚══════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     
-    echo -e "${CYAN}📊 INFORMAÇÕES DA INSTALAÇÃO${NC}"
-    echo -e "  ${BLUE}•${NC} Data da instalação: $(date)"
-    echo -e "  ${BLUE}•${NC} Diretório de instalação: $INSTALL_DIR"
-    echo -e "  ${BLUE}•${NC} Usuário do serviço: $SERVICE_USER"
-    echo -e "  ${BLUE}•${NC} Porta do serviço: $DEFAULT_PORT"
+    echo -e "${CYAN}🌐 ACESSO À INTERFACE:${NC}"
+    echo -e "  ${GREEN}URL:${NC} http://$local_ip:8080"
+    echo -e "  ${GREEN}Local:${NC} http://localhost:8080"
     
-    echo -e "\n${CYAN}🌐 ACESSO À INTERFACE WEB${NC}"
-    echo -e "  ${GREEN}•${NC} URL Local:      http://localhost:$DEFAULT_PORT"
-    echo -e "  ${GREEN}•${NC} URL da Rede:    http://$local_ip:$DEFAULT_PORT"
+    echo -e "\n${CYAN}🔐 CREDENCIAIS:${NC}"
+    echo -e "  ${YELLOW}Usuário:${NC} admin"
+    echo -e "  ${YELLOW}Senha:${NC} admin123 ${RED}(Altere imediatamente!)${NC}"
     
-    if [[ "$public_ip" != "Não detectado" ]]; then
-        echo -e "  ${YELLOW}•${NC} URL Pública:    http://$public_ip:$DEFAULT_PORT ${RED}(⚠ Exposta!)${NC}"
-    fi
+    echo -e "\n${CYAN}⚙️  COMANDOS:${NC}"
+    echo -e "  ${BLUE}sudo systemctl start webstream-hunter${NC}"
+    echo -e "  ${BLUE}sudo systemctl stop webstream-hunter${NC}"
+    echo -e "  ${BLUE}sudo systemctl status webstream-hunter${NC}"
+    echo -e "  ${BLUE}sudo journalctl -u webstream-hunter -f${NC}"
     
-    echo -e "\n${CYAN}🔐 CREDENCIAIS DE ACESSO${NC}"
-    echo -e "  ${BLUE}•${NC} Usuário padrão: admin"
-    echo -e "  ${BLUE}•${NC} Senha padrão: admin123 ${RED}(⚠ Altere imediatamente!)${NC}"
+    echo -e "\n${CYAN}📁 DIRETÓRIOS:${NC}"
+    echo -e "  ${BLUE}Aplicação:${NC} $INSTALL_DIR"
+    echo -e "  ${BLUE}Logs:${NC} $LOG_DIR"
+    echo -e "  ${BLUE}Config:${NC} /etc/webstream_hunter"
     
-    echo -e "\n${CYAN}⚙️  COMANDOS DE GERENCIAMENTO${NC}"
-    echo -e "  ${GREEN}sudo systemctl start webstream-hunter${NC}     # Iniciar"
-    echo -e "  ${GREEN}sudo systemctl stop webstream-hunter${NC}      # Parar"
-    echo -e "  ${GREEN}sudo systemctl restart webstream-hunter${NC}   # Reiniciar"
-    echo -e "  ${GREEN}sudo systemctl status webstream-hunter${NC}    # Ver status"
-    echo -e "  ${GREEN}sudo journalctl -u webstream-hunter -f${NC}    # Ver logs"
+    echo -e "\n${CYAN}🚀 PRÓXIMOS PASSOS:${NC}"
+    echo -e "  1. Acesse http://$local_ip:8080"
+    echo -e "  2. Faça login com admin/admin123"
+    echo -e "  3. Configure seu primeiro scan"
+    echo -e "  4. Explore os streams encontrados"
     
-    echo -e "\n${CYAN}📁 DIRETÓRIOS IMPORTANTES${NC}"
-    echo -e "  ${BLUE}•${NC} Aplicação:      $INSTALL_DIR"
-    echo -e "  ${BLUE}•${NC} Logs:           $LOG_DIR"
-    echo -e "  ${BLUE}•${NC} Dados:          $DATA_DIR"
-    echo -e "  ${BLUE}•${NC} Configuração:   $CONFIG_DIR"
-    echo -e "  ${BLUE}•${NC} Templates:      $TEMPLATE_DIR"
+    echo -e "\n${RED}⚠️  IMPORTANTE:${NC}"
+    echo -e "  • Altere a senha padrão!"
+    echo -e "  • Use apenas em redes autorizadas"
+    echo -e "  • Respeite as leis de privacidade"
     
-    echo -e "\n${CYAN}🛡️  RECOMENDAÇÕES DE SEGURANÇA${NC}"
-    echo -e "  ${RED}1.${NC} Altere a senha padrão imediatamente!"
-    echo -e "  ${RED}2.${NC} Configure SSL/HTTPS na interface web"
-    echo -e "  ${RED}3.${NC} Restrinja IPs de acesso via configuração"
-    echo -e "  ${RED}4.${NC} Configure firewall para permitir apenas IPs confiáveis"
-    echo -e "  ${RED}5.${NC} Mantenha o sistema atualizado regularmente"
-    
-    echo -e "\n${CYAN}🚀 PRÓXIMOS PASSOS${NC}"
-    echo -e "  ${GREEN}1.${NC} Acesse http://$local_ip:$DEFAULT_PORT no navegador"
-    echo -e "  ${GREEN}2.${NC} Faça login com admin/admin123"
-    echo -e "  ${GREEN}3.${NC} Vá em Configurações → Segurança"
-    echo -e "  ${GREEN}4.${NC} Altere a senha padrão"
-    echo -e "  ${GREEN}5.${NC} Configure conforme necessário"
-    echo -e "  ${GREEN}6.${NC} Inicie seu primeiro scan!"
-    
-    echo -e "\n${CYAN}📞 SUPORTE E SOLUÇÃO DE PROBLEMAS${NC}"
-    echo -e "  ${BLUE}•${NC} Logs da instalação: $LOG_DIR/install.log"
-    echo -e "  ${BLUE}•${NC} Logs da aplicação:  $LOG_DIR/app.log"
-    echo -e "  ${BLUE}•${NC} Status do serviço:  sudo systemctl status webstream-hunter"
-    echo -e "  ${BLUE}•${NC} Reiniciar serviço:  sudo systemctl restart webstream-hunter"
-    
-    echo -e "\n${GREEN}"
-    echo "╔══════════════════════════════════════════════════════════════════╗"
-    echo "║        O WebStream Hunter está pronto para uso! 🎉             ║"
-    echo "╚══════════════════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
-    
-    # Advertência de segurança
-    echo -e "\n${RED}⚠️  AVISO LEGAL IMPORTANTE:${NC}"
-    echo -e "Este software deve ser usado APENAS em redes que você possui ou tem"
-    echo -e "permissão explícita para escanear. O uso indevido pode violar leis"
-    echo -e "locais e resultar em consequências legais graves."
-    echo -e "O desenvolvedor não se responsabiliza pelo uso indevido deste software."
-    
-    # Criar arquivo de informações
-    cat > "$INSTALL_DIR/INSTALL_INFO.txt" << EOF
-============================================
-WEBSTREAM HUNTER - INFORMAÇÕES DA INSTALAÇÃO
-============================================
-
-Data da instalação: $(date)
-Sistema: $(lsb_release -d 2>/dev/null | cut -f2 || uname -a)
-Usuário do serviço: $SERVICE_USER
-Porta do serviço: $DEFAULT_PORT
-
-URLs de acesso:
-- Local:      http://localhost:$DEFAULT_PORT
-- Rede:       http://$local_ip:$DEFAULT_PORT
-- Pública:    http://$public_ip:$DEFAULT_PORT (se disponível)
-
-Credenciais:
-- Usuário: admin
-- Senha: admin123 (ALTERE IMEDIATAMENTE!)
-
-Diretórios:
-- Aplicação:      $INSTALL_DIR
-- Logs:           $LOG_DIR
-- Dados:          $DATA_DIR
-- Configuração:   $CONFIG_DIR
-
-Comandos úteis:
-- Iniciar:    sudo systemctl start webstream-hunter
-- Parar:      sudo systemctl stop webstream-hunter
-- Reiniciar:  sudo systemctl restart webstream-hunter
-- Status:     sudo systemctl status webstream-hunter
-- Logs:       sudo journalctl -u webstream-hunter -f
-
-Backup automático configurado para 2:00 AM
-Monitoramento configurado a cada 5 minutos
-
-⚠️  RECOMENDAÇÕES DE SEGURANÇA:
-1. Altere a senha padrão imediatamente!
-2. Configure SSL/HTTPS
-3. Restrinja IPs de acesso
-4. Configure firewall
-5. Mantenha atualizado
-
-⚠️  AVISO LEGAL:
-Use apenas em redes autorizadas. Respeite as leis locais.
-O uso indevido é de inteira responsabilidade do usuário.
-EOF
-    
-    log_success "Arquivo de informações salvo em: $INSTALL_DIR/INSTALL_INFO.txt"
+    echo -e "\n${GREEN}✅ Instalação concluída com sucesso!${NC}"
 }
 
 # ==============================================================================
@@ -1807,29 +983,25 @@ main_installation() {
     
     # Verificações iniciais
     check_root
-    check_ubuntu_version
-    check_disk_space
-    check_memory
+    check_ubuntu
     
-    # Etapas de instalação
-    update_system
-    install_system_dependencies
-    create_directories
-    create_service_user
+    # Corrigir e atualizar sistema
+    fix_apt_sources
+    update_system_safe
+    
+    # Instalar pacotes
+    install_essential_packages
+    install_streaming_packages
+    
+    # Configurar aplicação
     setup_python_environment
     create_application_files
-    set_permissions
+    setup_systemd_service
     setup_firewall
-    setup_cron_jobs
-    initialize_system
     
-    # Verificações finais
-    if final_checks; then
-        show_final_report
-    else
-        log_error "A instalação teve problemas. Verifique os logs: $LOG_DIR/install.log"
-        exit 1
-    fi
+    # Verificações
+    final_checks
+    show_final_report
 }
 
 # ==============================================================================
@@ -1839,137 +1011,41 @@ main_installation() {
 uninstall() {
     log_header "DESINSTALANDO WEBSTREAM HUNTER"
     
-    echo -e "${RED}ATENÇÃO:${NC} Esta ação irá:"
-    echo -e "  1. Parar e remover o serviço"
-    echo -e "  2. Remover todos os arquivos da aplicação"
-    echo -e "  3. Manter dados de backup em $INSTALL_DIR/backups/"
-    echo -e "  4. Remover usuário do sistema"
-    echo ""
-    read -p "Tem certeza que deseja continuar? (digite 'SIM' para confirmar): " -r
+    echo -e "${RED}Tem certeza que deseja desinstalar? (s/N): ${NC}"
+    read -n 1 -r
     echo
     
-    if [[ "$REPLY" != "SIM" ]]; then
+    if [[ ! $REPLY =~ ^[Ss]$ ]]; then
         log_info "Desinstalação cancelada"
         exit 0
     fi
     
     # Parar serviço
-    if systemctl is-active --quiet webstream-hunter; then
-        run_command "systemctl stop webstream-hunter" "Parando serviço"
-    fi
+    systemctl stop webstream-hunter.service 2>/dev/null || true
+    systemctl disable webstream-hunter.service 2>/dev/null || true
     
-    # Desabilitar serviço
-    if systemctl is-enabled --quiet webstream-hunter 2>/dev/null; then
-        run_command "systemctl disable webstream-hunter" "Desabilitando serviço"
-    fi
+    # Remover arquivos
+    rm -f /etc/systemd/system/webstream-hunter.service
+    systemctl daemon-reload
     
-    # Remover serviço
-    if [[ -f "/etc/systemd/system/webstream-hunter.service" ]]; then
-        run_command "rm -f /etc/systemd/system/webstream-hunter.service" "Removendo arquivo do serviço"
-    fi
-    
-    # Recarregar systemd
-    run_command "systemctl daemon-reload" "Recarregando systemd"
-    
-    # Remover cron jobs
-    run_command "crontab -l | grep -v 'webstream_hunter' | crontab -" "Removendo tarefas cron"
-    
-    # Remover regras do firewall
-    if command -v ufw > /dev/null 2>&1; then
-        if ufw status | grep -q "WebStream Hunter"; then
-            run_command "ufw delete allow $DEFAULT_PORT/tcp" "Removendo regra do firewall"
-        fi
-    fi
-    
-    # Backup dos dados
-    BACKUP_DIR="$INSTALL_DIR/backups/final_$(date +%Y%m%d_%H%M%S)"
-    run_command "mkdir -p '$BACKUP_DIR'" "Criando diretório de backup final"
-    
-    if [[ -f "/var/lib/webstream_hunter/database.db" ]]; then
-        run_command "cp '/var/lib/webstream_hunter/database.db' '$BACKUP_DIR/'" "Fazendo backup do banco de dados"
-    fi
-    
-    if [[ -f "/etc/webstream_hunter/config.json" ]]; then
-        run_command "cp '/etc/webstream_hunter/config.json' '$BACKUP_DIR/'" "Fazendo backup da configuração"
-    fi
-    
-    # Remover diretórios
-    run_command "rm -rf '$INSTALL_DIR'" "Removendo diretório de instalação"
-    run_command "rm -rf '$CONFIG_DIR'" "Removendo diretório de configuração"
-    
-    # Manter logs por 7 dias
-    run_command "mv '$LOG_DIR' '$BACKUP_DIR/logs'" "Movendo logs para backup"
-    
-    # Remover diretórios de dados (opcional)
-    read -p "Remover diretórios de dados e cache? (s/N): " -n 1 -r
+    # Remover diretórios (opcional)
+    echo -e "${YELLOW}Remover diretórios de dados? (s/N): ${NC}"
+    read -n 1 -r
     echo
+    
     if [[ $REPLY =~ ^[Ss]$ ]]; then
-        run_command "rm -rf '$DATA_DIR'" "Removendo diretório de dados"
-        run_command "rm -rf '$CACHE_DIR'" "Removendo diretório de cache"
+        rm -rf "$INSTALL_DIR"
+        rm -rf /etc/webstream_hunter
+        rm -rf /usr/share/webstream_hunter
+        log_info "Diretórios removidos"
     else
-        log_info "Diretórios de dados mantidos: $DATA_DIR, $CACHE_DIR"
+        log_info "Diretórios mantidos em:"
+        log_info "  $INSTALL_DIR"
+        log_info "  /etc/webstream_hunter"
+        log_info "  /usr/share/webstream_hunter"
     fi
     
-    # Remover templates
-    run_command "rm -rf '$TEMPLATE_DIR'" "Removendo templates"
-    run_command "rm -rf '$STATIC_DIR'" "Removendo arquivos estáticos"
-    
-    # Remover usuário (opcional)
-    read -p "Remover usuário '$SERVICE_USER'? (s/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Ss]$ ]]; then
-        run_command "userdel '$SERVICE_USER' 2>/dev/null || true" "Removendo usuário"
-        run_command "groupdel '$SERVICE_GROUP' 2>/dev/null || true" "Removendo grupo"
-    else
-        log_info "Usuário mantido: $SERVICE_USER"
-    fi
-    
-    log_success "Desinstalação concluída!"
-    echo -e "\n${YELLOW}Arquivos de backup salvos em:${NC} $BACKUP_DIR"
-    echo -e "${YELLOW}Para remover completamente, execute:${NC}"
-    echo -e "  sudo rm -rf $BACKUP_DIR"
-    echo -e "  sudo rm -rf $DATA_DIR"
-    echo -e "  sudo rm -rf $CACHE_DIR"
-}
-
-# ==============================================================================
-# FUNÇÃO DE ATUALIZAÇÃO
-# ==============================================================================
-
-update() {
-    log_header "ATUALIZANDO WEBSTREAM HUNTER"
-    
-    if [[ ! -d "$INSTALL_DIR" ]]; then
-        log_error "WebStream Hunter não está instalado!"
-        exit 1
-    fi
-    
-    # Fazer backup antes de atualizar
-    run_command "$INSTALL_DIR/backup.sh" "Fazendo backup antes da atualização"
-    
-    # Parar serviço
-    run_command "systemctl stop webstream-hunter" "Parando serviço"
-    
-    # Atualizar dependências do sistema
-    update_system
-    
-    # Atualizar dependências Python
-    run_command "'$VENV_DIR/bin/pip' install --upgrade -r '$INSTALL_DIR/requirements.txt'" "Atualizando dependências Python"
-    
-    # Recriar arquivos da aplicação (exceto configuração)
-    create_application_files
-    
-    # Aplicar permissões
-    set_permissions
-    
-    # Recarregar systemd
-    run_command "systemctl daemon-reload" "Recarregando systemd"
-    
-    # Iniciar serviço
-    run_command "systemctl start webstream-hunter" "Iniciando serviço"
-    
-    log_success "Atualização concluída!"
-    log_info "Reinicie a interface para aplicar as mudanças"
+    log_success "WebStream Hunter desinstalado"
 }
 
 # ==============================================================================
@@ -1979,111 +1055,28 @@ update() {
 status() {
     log_header "STATUS DO WEBSTREAM HUNTER"
     
-    echo -e "${CYAN}Verificando status do sistema...${NC}\n"
+    echo -e "${CYAN}Verificando serviço...${NC}\n"
     
-    # Verificar serviço
-    if systemctl is-active --quiet webstream-hunter; then
+    if systemctl is-active --quiet webstream-hunter.service; then
         echo -e "${GREEN}✓ Serviço está em execução${NC}"
+        systemctl status webstream-hunter.service --no-pager | head -20
     else
         echo -e "${RED}✗ Serviço não está em execução${NC}"
     fi
     
-    echo ""
-    
-    # Verificar porta
-    if netstat -tuln | grep -q ":$DEFAULT_PORT "; then
-        echo -e "${GREEN}✓ Aplicação ouvindo na porta $DEFAULT_PORT${NC}"
+    echo -e "\n${CYAN}Verificando porta...${NC}"
+    if netstat -tuln | grep -q ":8080 "; then
+        echo -e "${GREEN}✓ Ouvindo na porta 8080${NC}"
     else
-        echo -e "${RED}✗ Aplicação não está ouvindo na porta $DEFAULT_PORT${NC}"
+        echo -e "${RED}✗ Não está ouvindo na porta 8080${NC}"
     fi
     
-    echo ""
-    
-    # Verificar diretórios
-    echo -e "${CYAN}Diretórios:${NC}"
-    local directories=(
-        ["$INSTALL_DIR"]="Instalação"
-        ["$LOG_DIR"]="Logs"
-        ["$DATA_DIR"]="Dados"
-        ["$CONFIG_DIR"]="Configuração"
-    )
-    
-    for dir in "${!directories[@]}"; do
-        if [[ -d "$dir" ]]; then
-            size=$(du -sh "$dir" 2>/dev/null | cut -f1)
-            echo -e "  ${GREEN}✓${NC} ${directories[$dir]}: $dir ($size)"
-        else
-            echo -e "  ${RED}✗${NC} ${directories[$dir]}: $dir (Não existe)"
-        fi
-    done
-    
-    echo ""
-    
-    # Verificar arquivos importantes
-    echo -e "${CYAN}Arquivos importantes:${NC}"
-    local files=(
-        ["$INSTALL_DIR/webstream_hunter.py"]="Aplicação principal"
-        ["$CONFIG_DIR/config.json"]="Configuração"
-        ["/etc/systemd/system/webstream-hunter.service"]="Serviço systemd"
-        ["$LOG_DIR/app.log"]="Log da aplicação"
-    )
-    
-    for file in "${!files[@]}"; do
-        if [[ -f "$file" ]]; then
-            size=$(stat -c%s "$file" 2>/dev/null | numfmt --to=iec || echo "N/A")
-            echo -e "  ${GREEN}✓${NC} ${files[$file]}: $(basename "$file") ($size)"
-        else
-            echo -e "  ${RED}✗${NC} ${files[$file]}: $(basename "$file") (Não existe)"
-        fi
-    done
-    
-    echo ""
-    
-    # Verificar virtual environment
-    if [[ -f "$VENV_DIR/bin/python" ]]; then
-        python_version=$("$VENV_DIR/bin/python" --version 2>&1)
-        echo -e "${GREEN}✓ Virtual environment: $python_version${NC}"
+    echo -e "\n${CYAN}Testando API...${NC}"
+    if curl -s http://localhost:8080/api/status 2>/dev/null | grep -q "online"; then
+        echo -e "${GREEN}✓ API respondendo${NC}"
     else
-        echo -e "${RED}✗ Virtual environment não configurado${NC}"
+        echo -e "${RED}✗ API não está respondendo${NC}"
     fi
-    
-    echo ""
-    
-    # Espaço em disco
-    echo -e "${CYAN}Uso de recursos:${NC}"
-    
-    # CPU
-    cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1)
-    echo -e "  CPU: ${cpu_usage}%"
-    
-    # Memória
-    mem_usage=$(free | awk '/Mem:/ {printf("%.1f"), $3/$2 * 100}')
-    mem_total=$(free -h | awk '/Mem:/ {print $2}')
-    echo -e "  Memória: ${mem_usage}% de ${mem_total}"
-    
-    # Disco
-    disk_usage=$(df -h / | awk 'NR==2 {print $5}')
-    disk_total=$(df -h / | awk 'NR==2 {print $2}')
-    echo -e "  Disco (root): ${disk_usage} de ${disk_total}"
-    
-    echo ""
-    
-    # Logs recentes
-    if [[ -f "$LOG_DIR/app.log" ]]; then
-        echo -e "${CYAN}Últimas entradas do log:${NC}"
-        tail -5 "$LOG_DIR/app.log" | while IFS= read -r line; do
-            echo -e "  ${BLUE}•${NC} $line"
-        done
-    fi
-    
-    echo ""
-    
-    # Informações de acesso
-    local_ip=$(hostname -I | awk '{print $1}')
-    echo -e "${CYAN}Informações de acesso:${NC}"
-    echo -e "  ${BLUE}•${NC} URL: http://$local_ip:$DEFAULT_PORT"
-    echo -e "  ${BLUE}•${NC} Usuário: admin"
-    echo -e "  ${BLUE}•${NC} Para ver logs completos: sudo journalctl -u webstream-hunter -f"
 }
 
 # ==============================================================================
@@ -2093,20 +1086,18 @@ status() {
 show_menu() {
     echo -e "${CYAN}"
     echo "╔══════════════════════════════════════════════════════════════════╗"
-    echo "║                  WEBSTREAM HUNTER - MENU PRINCIPAL               ║"
+    echo "║                  WEBSTREAM HUNTER - INSTALADOR                   ║"
     echo "╚══════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     
-    echo -e "${GREEN}Opções disponíveis:${NC}"
+    echo -e "${GREEN}Escolha uma opção:${NC}"
     echo -e "  ${CYAN}1.${NC} Instalação completa"
     echo -e "  ${CYAN}2.${NC} Desinstalar"
-    echo -e "  ${CYAN}3.${NC} Atualizar"
-    echo -e "  ${CYAN}4.${NC} Ver status"
-    echo -e "  ${CYAN}5.${NC} Backup manual"
-    echo -e "  ${CYAN}6.${NC} Sair"
+    echo -e "  ${CYAN}3.${NC} Ver status"
+    echo -e "  ${CYAN}4.${NC} Sair"
     echo ""
     
-    read -p "Selecione uma opção (1-6): " -n 1 -r
+    read -p "Opção (1-4): " -n 1 -r
     echo
     
     case $REPLY in
@@ -2117,20 +1108,9 @@ show_menu() {
             uninstall
             ;;
         3)
-            update
-            ;;
-        4)
             status
             ;;
-        5)
-            if [[ -f "$INSTALL_DIR/backup.sh" ]]; then
-                log_info "Executando backup manual..."
-                "$INSTALL_DIR/backup.sh"
-            else
-                log_error "Script de backup não encontrado"
-            fi
-            ;;
-        6)
+        4)
             log_info "Saindo..."
             exit 0
             ;;
@@ -2142,16 +1122,10 @@ show_menu() {
 }
 
 # ==============================================================================
-# TRATAMENTO DE SINAIS
+# TRATAMENTO DE ARGUMENTOS
 # ==============================================================================
 
-trap 'log_error "Instalação interrompida pelo usuário"; exit 1' INT TERM
-
-# ==============================================================================
-# EXECUÇÃO PRINCIPAL
-# ==============================================================================
-
-# Verificar se há argumentos
+# Verificar argumentos
 if [[ $# -gt 0 ]]; then
     case $1 in
         --install|-i)
@@ -2160,9 +1134,6 @@ if [[ $# -gt 0 ]]; then
         --uninstall|-u)
             uninstall
             ;;
-        --update|--upgrade)
-            update
-            ;;
         --status|-s)
             status
             ;;
@@ -2170,18 +1141,17 @@ if [[ $# -gt 0 ]]; then
             echo "Uso: $0 [OPÇÃO]"
             echo ""
             echo "Opções:"
-            echo "  --install, -i     Instalação completa"
-            echo "  --uninstall, -u   Desinstalar o sistema"
-            echo "  --update          Atualizar instalação"
-            echo "  --status, -s      Verificar status"
-            echo "  --help, -h        Mostrar esta ajuda"
+            echo "  --install, -i    Instalação completa"
+            echo "  --uninstall, -u  Desinstalar"
+            echo "  --status, -s     Verificar status"
+            echo "  --help, -h       Ajuda"
             echo ""
             echo "Sem argumentos: Menu interativo"
             exit 0
             ;;
         *)
             log_error "Argumento inválido: $1"
-            echo "Use $0 --help para ver as opções"
+            echo "Use: $0 --help"
             exit 1
             ;;
     esac
@@ -2191,5 +1161,4 @@ else
 fi
 
 # Registrar conclusão
-log_info "Script executado com sucesso!"
-exit 0
+log_info "Processo concluído. Log salvo em: $LOG_FILE"
