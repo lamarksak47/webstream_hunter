@@ -4,22 +4,9 @@ git clone https://github.com/lamarksak47/webstream_hunter.git
 
 cd webstream_hunter
 
-1. Salvar o script:
-
-# Copie todo o conteúdo acima e salve como:
-
-sudo nano install_webstream_hunter.sh
-
-2. Tornar executável:
-
 sudo chmod +x install_webstream_hunter.sh
 
-3. Executar a instalação:
-4. 
-Opção A - Instalação completa (recomendado):
-
-
-sudo ./install_webstream_hunter.sh --install
+sudo ./install_webstream_hunter.sh
 
 Opção B - Menu interativo:
 
