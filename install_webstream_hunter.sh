@@ -169,10 +169,10 @@ run_command() {
 update_system() {
     log_step "Atualizando sistema operacional"
     
-    run_command "apt-get update -y" "Atualizando lista de pacotes"
-    run_command "apt-get upgrade -y" "Atualizando pacotes do sistema"
-    run_command "apt-get autoremove -y" "Removendo pacotes não utilizados"
-    run_command "apt-get autoclean -y" "Limpando cache de pacotes"
+    run_command "sudo apt-get update -y" "Atualizando lista de pacotes"
+    run_command "sudo apt-get upgrade -y" "Atualizando pacotes do sistema"
+    run_command "sudo apt-get autoremove -y" "Removendo pacotes não utilizados"
+    run_command "sudo apt-get autoclean -y" "Limpando cache de pacotes"
 }
 
 install_system_dependencies() {
